@@ -40,6 +40,38 @@ public class Order {
         this.updatedAt = Instant.now();
     }
 
+    /**
+     * Factory method for restoring an Order from persistent storage.
+     * Allows timestamps to be preserved during deserialization.
+     * Used internally by persistence layer only.
+     *
+     * @param id the order ID
+     * @param customer the customer name
+     * @param total the order total
+     * @param status the order status
+     * @param createdAt the creation timestamp to restore
+     * @param updatedAt the last modification timestamp to restore
+     * @return a new Order with the specified timestamps
+     */
+    public static Order fromPersistence(Long id, String customer, double total, 
+                                       OrderStatus status, Instant createdAt, Instant updatedAt) {
+        Order order = new Order(id, customer, total, status);
+        // Replace the timestamps that were auto-set in constructor with persisted values
+        // This is done via reflection to bypass the final field restriction
+        try {
+            var createdAtField = Order.class.getDeclaredField("createdAt");
+            createdAtField.setAccessible(true);
+            createdAtField.set(order, createdAt);
+            
+            order.updatedAt = updatedAt;
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            // If reflection fails, just use the timestamps from constructor
+            // The order is still valid, just with different timestamps
+            System.err.println("Warning: Could not restore timestamps from persistence: " + e.getMessage());
+        }
+        return order;
+    }
+
     // Getters with Optional support for null-safe operations
     public Long getId() { 
         return id; 
