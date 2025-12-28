@@ -37,6 +37,83 @@ order-service-1/
 - **Testing**: JUnit 5.9.2 (Jupiter API)
 - **Architecture**: Layered (Model → Service → Repository)
 
+## Java 17 Modernizations
+
+This project demonstrates best practices and modern features of Java 17:
+
+### 1. **Enhanced Domain Modeling**
+- Automatic timestamp tracking with `java.time.Instant`
+- Auto-updating `createdAt` and `updatedAt` fields
+- Improved null handling with `Objects.requireNonNullElse()`
+
+```java
+public class Order {
+    private final Instant createdAt;
+    private Instant updatedAt;
+    
+    public Order(Long id, String customer, double total, OrderStatus status) {
+        this.createdAt = Instant.now();
+        this.updatedAt = Instant.now();
+        this.status = Objects.requireNonNullElse(status, OrderStatus.PENDING);
+    }
+}
+```
+
+### 2. **Optional Best Practices**
+- Comprehensive Optional usage for null-safety
+- `orElseThrow()` for exception handling
+- `ifPresentOrElse()` for conditional logic
+
+```java
+// Safe Optional-based operations
+repository.findById(id)
+    .ifPresentOrElse(
+        order -> repository.deleteById(id),
+        () -> { throw new OrderNotFoundException(id); }
+    );
+```
+
+### 3. **Stream-Based Processing**
+- `findAll()` method enabling stream operations
+- Declarative filtering, mapping, and aggregation
+- Functional approach to data queries
+
+```java
+// Stream-based reporting utilities
+List<Order> completed = repository.findAll().stream()
+    .filter(Order::isTerminalState)
+    .collect(Collectors.toList());
+
+double total = repository.findAll().stream()
+    .filter(order -> order.getStatus() == status)
+    .mapToDouble(Order::getTotal)
+    .sum();
+```
+
+### 4. **Text Blocks (Triple-Quoted Strings)**
+- Cleaner multi-line string formatting
+- Better readability for documentation
+
+```java
+@Override
+public String toString() {
+    return """
+        Order{id=%d, customer='%s', total=%.2f, status=%s, \
+        createdAt=%s, updatedAt=%s}""".formatted(
+            id, customer, total, status, createdAt, updatedAt);
+}
+```
+
+### 5. **Improved Concurrency**
+- `ConcurrentHashMap` for thread-safe operations
+- `AtomicLong` for lock-free ID generation
+- Implicit thread-safety in immutable timestamp fields
+
+```java
+private final Map<Long, Order> store = new ConcurrentHashMap<>();
+private final AtomicLong idSeq = new AtomicLong(1);
+```
+
 ## Prerequisites
 
 - Java 17 or higher
@@ -207,7 +284,7 @@ if (order.getStatus().isTerminal()) {
 }
 ```
 
-## Test Cases (29 Total)
+## Test Cases (37 Total)
 
 **Order CRUD & Equality (9 tests)**:
 ✅ testCreateOrder — Validates order creation with auto-generated ID  
@@ -244,7 +321,17 @@ if (order.getStatus().isTerminal()) {
 ✅ testConcurrentAccessToTerminalOrders — Terminal state immutability  
 ✅ testStressTestRapidConcurrentOperations — 250 operations × 50 threads  
 
-**Test Results**: 29/29 passed ✅
+**Java 17 Modernization Tests (8 tests)**:
+✅ testOrderTimestampTracking — Automatic timestamp creation with java.time.Instant  
+✅ testOrderUpdatedAtChangesOnStatusUpdate — Timestamp updates on state changes  
+✅ testIsTerminalStateMethod — Terminal state detection with Optional  
+✅ testGetAllOrders — Stream-safe retrieval of all orders  
+✅ testGetOrdersByStatus — Stream-based filtering by status  
+✅ testGetCompletedOrders — Terminal state collection using streams  
+✅ testGetTotalByStatus — Stream aggregation for financial reporting  
+✅ testCountByStatus — Stream-based counting operations  
+
+**Test Results**: 37/37 passed ✅
 
 ## Project Packages
 
@@ -269,12 +356,17 @@ if (order.getStatus().isTerminal()) {
 
 ## Version History
 
-### v1.1.0 (Current) - Java 17 & JUnit 5 Migration
+### v1.1.0 (Current) - Java 17 Full Modernization
 - ✅ Upgraded from Java 8 to Java 17
 - ✅ Migrated from JUnit 4 to JUnit 5 (Jupiter API)
 - ✅ Updated Maven compiler plugins for Java 17 compatibility
 - ✅ Added 13 comprehensive concurrency tests
-- ✅ All 29 tests passing (22 unit + 7 concurrency)
+- ✅ **NEW**: Added 8 Java 17 modernization tests
+- ✅ **NEW**: Implemented java.time.Instant timestamps (createdAt, updatedAt)
+- ✅ **NEW**: Improved Optional usage with ifPresentOrElse() and orElseThrow()
+- ✅ **NEW**: Added stream-based utility methods (findAll, getByStatus, etc.)
+- ✅ **NEW**: Implemented text blocks for cleaner string formatting
+- ✅ All 37 tests passing (22 unit + 7 concurrency + 8 Java 17 feature)
 
 ### v1.0.0 - Initial Release
 - Java 8 with JUnit 4
