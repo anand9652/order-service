@@ -269,4 +269,143 @@ public class OrderServiceTest {
             service.processOrder(created.getId());
         });
     }
+
+    // Java 17 Feature Tests
+
+    @Test
+    void testOrderTimestampTracking() {
+        Order order = new Order(null, "TimestampTest", 100.0);
+        Order created = service.createOrder(order);
+
+        assertNotNull(created.getCreatedAt());
+        assertNotNull(created.getUpdatedAt());
+        assertTrue(created.getCreatedAt().isBefore(created.getUpdatedAt()) ||
+                   created.getCreatedAt().equals(created.getUpdatedAt()));
+    }
+
+    @Test
+    void testOrderUpdatedAtChangesOnStatusUpdate() throws InterruptedException {
+        Order order = new Order(null, "UpdateTest", 100.0);
+        Order created = service.createOrder(order);
+
+        var createdAtTime = created.getCreatedAt();
+        var initialUpdatedAt = created.getUpdatedAt();
+
+        Thread.sleep(10); // Small delay to ensure timestamp difference
+        service.confirmOrder(created.getId());
+        
+        Order updated = service.getOrder(created.getId());
+        assertEquals(createdAtTime, updated.getCreatedAt());
+        assertTrue(updated.getUpdatedAt().isAfter(initialUpdatedAt));
+    }
+
+    @Test
+    void testIsTerminalStateMethod() {
+        Order deliveredOrder = new Order(null, "Terminal", 100.0, OrderStatus.DELIVERED);
+        assertTrue(deliveredOrder.isTerminalState());
+
+        Order pendingOrder = new Order(null, "Active", 100.0, OrderStatus.PENDING);
+        assertFalse(pendingOrder.isTerminalState());
+    }
+
+    @Test
+    void testGetAllOrders() {
+        service.createOrder(new Order(null, "Order1", 100.0));
+        service.createOrder(new Order(null, "Order2", 200.0));
+        service.createOrder(new Order(null, "Order3", 300.0));
+
+        var allOrders = service.getAllOrders();
+        assertNotNull(allOrders);
+        assertEquals(3, allOrders.size());
+    }
+
+    @Test
+    void testGetOrdersByStatus() {
+        Order order1 = service.createOrder(new Order(null, "Order1", 100.0));
+        Order order2 = service.createOrder(new Order(null, "Order2", 200.0));
+        
+        service.confirmOrder(order1.getId());
+
+        var pendingOrders = service.getOrdersByStatus(OrderStatus.PENDING);
+        var confirmedOrders = service.getOrdersByStatus(OrderStatus.CONFIRMED);
+
+        assertEquals(1, pendingOrders.size());
+        assertEquals(1, confirmedOrders.size());
+        assertEquals("Order2", pendingOrders.get(0).getCustomer());
+        assertEquals("Order1", confirmedOrders.get(0).getCustomer());
+    }
+
+    @Test
+    void testGetCompletedOrders() {
+        Order order1 = service.createOrder(new Order(null, "Order1", 100.0));
+        Order order2 = service.createOrder(new Order(null, "Order2", 200.0));
+        service.createOrder(new Order(null, "Order3", 300.0));
+
+        // Complete order1 -> DELIVERED
+        service.confirmOrder(order1.getId());
+        service.processOrder(order1.getId());
+        service.shipOrder(order1.getId());
+        service.deliverOrder(order1.getId());
+
+        // Cancel order2
+        service.cancelOrder(order2.getId());
+
+        // Leave order3 in PENDING state
+
+        var completedOrders = service.getCompletedOrders();
+        assertEquals(2, completedOrders.size());
+        assertTrue(completedOrders.stream()
+            .allMatch(Order::isTerminalState));
+    }
+
+    @Test
+    void testGetTotalByStatus() {
+        // Use fresh orders to avoid test isolation issues
+        long timestamp = System.currentTimeMillis();
+        service.createOrder(new Order(null, "Order_" + timestamp + "_1", 100.0));
+        service.createOrder(new Order(null, "Order_" + timestamp + "_2", 200.0));
+        service.createOrder(new Order(null, "Order_" + timestamp + "_3", 300.0));
+
+        double totalPending = service.getTotalByStatus(OrderStatus.PENDING);
+        // At least 600.0 from our created orders (may be more from other tests)
+        assertTrue(totalPending >= 600.0);
+
+        // Confirm one order and check totals again
+        var pendingOrders = service.getOrdersByStatus(OrderStatus.PENDING);
+        var orderToConfirm = pendingOrders.stream()
+            .filter(o -> o.getCustomer().contains("_" + timestamp + "_1"))
+            .findFirst();
+
+        if (orderToConfirm.isPresent()) {
+            service.confirmOrder(orderToConfirm.get().getId());
+
+            double newTotalPending = service.getTotalByStatus(OrderStatus.PENDING);
+            double totalConfirmed = service.getTotalByStatus(OrderStatus.CONFIRMED);
+
+            // Verify the totals changed correctly
+            assertTrue(newTotalPending < totalPending);
+            assertTrue(totalConfirmed > 0);
+        }
+    }
+
+    @Test
+    void testCountByStatus() {
+        service.createOrder(new Order(null, "Order1", 100.0));
+        service.createOrder(new Order(null, "Order2", 200.0));
+        service.createOrder(new Order(null, "Order3", 300.0));
+
+        long pendingCount = service.countByStatus(OrderStatus.PENDING);
+        assertEquals(3, pendingCount);
+
+        // Transition orders and recount
+        var pendingOrders = service.getOrdersByStatus(OrderStatus.PENDING);
+        service.confirmOrder(pendingOrders.get(0).getId());
+        service.confirmOrder(pendingOrders.get(1).getId());
+
+        long newPendingCount = service.countByStatus(OrderStatus.PENDING);
+        long confirmedCount = service.countByStatus(OrderStatus.CONFIRMED);
+
+        assertEquals(1, newPendingCount);
+        assertEquals(2, confirmedCount);
+    }
 }
