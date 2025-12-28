@@ -74,6 +74,78 @@ Option 2 - Using the JAR:
 java -jar target/order-service-1.0-SNAPSHOT-java17.jar
 ```
 
+## Demo Output
+
+Running the application demonstrates all key features of the order state machine:
+
+```
+╔════════════════════════════════════════════════════════════╗
+║        Order Service - State Transition Demo              ║
+╚════════════════════════════════════════════════════════════╝
+
+📦 SCENARIO 1: Complete Order Lifecycle (PENDING → DELIVERED)
+
+────────────────────────────────────────────────────────────
+✓ Order Created: Order{id=1, customer='Alice Johnson', total=249.99, status=PENDING}
+  ⏳ Status: Pending (Order created, awaiting payment) - [ACTIVE]
+✓ Order Confirmed: Order{id=1, customer='Alice Johnson', total=249.99, status=CONFIRMED}
+  ✅ Status: Confirmed (Payment received, order confirmed) - [ACTIVE]
+✓ Order Processing: Order{id=1, customer='Alice Johnson', total=249.99, status=PROCESSING}
+  ⚙️ Status: Processing (Order is being processed) - [ACTIVE]
+✓ Order Shipped: Order{id=1, customer='Alice Johnson', total=249.99, status=SHIPPED}
+  🚚 Status: Shipped (Order has been shipped) - [ACTIVE]
+✓ Order Delivered (Terminal State): Order{id=1, customer='Alice Johnson', total=249.99, status=DELIVERED}
+  📦 Status: Delivered (Order delivered to customer) - [TERMINAL]
+
+⚠ Attempting transition from terminal state DELIVERED → CANCELLED
+✓ Correctly rejected: Invalid state transition for Order 1: cannot transition from Delivered to Cancelled
+
+
+📦 SCENARIO 2: Order Cancellation (PENDING → CANCELLED)
+
+────────────────────────────────────────────────────────────
+✓ Order Created: Order{id=2, customer='Bob Smith', total=99.99, status=PENDING}
+  ⏳ Status: Pending (Order created, awaiting payment) - [ACTIVE]
+✓ Order Cancelled (Terminal State): Order{id=2, customer='Bob Smith', total=99.99, status=CANCELLED}
+  ❌ Status: Cancelled (Order cancelled by customer or system) - [TERMINAL]
+
+
+📦 SCENARIO 3: Order Failure (PENDING → FAILED)
+
+────────────────────────────────────────────────────────────
+✓ Order Created: Order{id=3, customer='Charlie Brown', total=150.0, status=PENDING}
+  ⏳ Status: Pending (Order created, awaiting payment) - [ACTIVE]
+✓ Order Failed (Terminal State): Order{id=3, customer='Charlie Brown', total=150.0, status=FAILED}
+  ⚠️ Status: Failed (Order processing failed) - [TERMINAL]
+
+
+📦 SCENARIO 4: Partial Lifecycle (PENDING → CONFIRMED → PROCESSING)
+
+────────────────────────────────────────────────────────────
+✓ Order Created: Order{id=4, customer='Diana Prince', total=399.99, status=PENDING}
+  ⏳ Status: Pending (Order created, awaiting payment) - [ACTIVE]
+✓ Order Confirmed: Order{id=4, customer='Diana Prince', total=399.99, status=CONFIRMED}
+  ✅ Status: Confirmed (Payment received, order confirmed) - [ACTIVE]
+✓ Order Processing: Order{id=4, customer='Diana Prince', total=399.99, status=PROCESSING}
+  ⚙️ Status: Processing (Order is being processed) - [ACTIVE]
+
+⚠ Attempting invalid transition: PROCESSING → CONFIRMED (reverse)
+✓ Correctly rejected: Invalid state transition for Order 4: cannot transition from Processing to Confirmed
+
+
+════════════════════════════════════════════════════════════
+📊 SUMMARY
+════════════════════════════════════════════════════════════
+✓ Order 1 (Alice):  PENDING → CONFIRMED → PROCESSING → SHIPPED → DELIVERED
+✓ Order 2 (Bob):    PENDING → CANCELLED
+✓ Order 3 (Charlie): PENDING → FAILED
+✓ Order 4 (Diana):  PENDING → CONFIRMED → PROCESSING
+
+✓ All state transitions validated successfully!
+✓ Invalid transitions correctly rejected!
+✓ Terminal states properly protected!
+```
+
 ## API Overview
 
 ### OrderService
