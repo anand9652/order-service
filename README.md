@@ -32,14 +32,14 @@ order-service-1/
 
 ## Technology Stack
 
-- **Language**: Java 8
+- **Language**: Java 17
 - **Build Tool**: Maven 3.9.11
-- **Testing**: JUnit 4.13.2
+- **Testing**: JUnit 5.9.2 (Jupiter API)
 - **Architecture**: Layered (Model → Service → Repository)
 
 ## Prerequisites
 
-- Java 8 or higher
+- Java 17 or higher
 - Maven 3.6+
 
 ## Getting Started
@@ -71,7 +71,7 @@ mvn exec:java -Dexec.mainClass="com.order.Main"
 
 Option 2 - Using the JAR:
 ```bash
-java -jar target/order-service-1.0-SNAPSHOT-java8.jar
+java -jar target/order-service-1.0-SNAPSHOT-java17.jar
 ```
 
 ## API Overview
@@ -135,7 +135,7 @@ if (order.getStatus().isTerminal()) {
 }
 ```
 
-## Test Cases (16 Total)
+## Test Cases (29 Total)
 
 **Order CRUD & Equality (9 tests)**:
 ✅ testCreateOrder — Validates order creation with auto-generated ID  
@@ -157,7 +157,22 @@ if (order.getStatus().isTerminal()) {
 ✅ testOrderCancellationFromPending — Tests cancellation flow  
 ✅ testOrderStatusDisplayInfo — Validates status display names and descriptions  
 
-**Test Results**: 16/16 passed ✅
+**Concurrency Tests (13 tests)**:
+✅ testInvalidTransitionInService — Invalid state transitions in service layer  
+✅ testValidTransitionInService — Valid state transitions in service  
+✅ testFullOrderLifecycleInService — Complete workflow through service  
+✅ testCannotTransitionFromDelivered — Terminal state protection  
+✅ testInvalidTransitionExceptionDetails — Exception context validation  
+✅ testCancelOrderAfterConfirmed — Order cancellation workflow  
+✅ testConcurrentOrderCreation — 10 threads × 10 orders (IDs unique & consistent)  
+✅ testConcurrentOrderRetrieval — 5 threads reading same order (data consistency)  
+✅ testConcurrentTransitionsOnSameOrder — Race condition prevention  
+✅ testConcurrentSequentialTransitions — Valid workflows under concurrency  
+✅ testHighConcurrencyMixedOperations — 100 operations × 20 threads  
+✅ testConcurrentAccessToTerminalOrders — Terminal state immutability  
+✅ testStressTestRapidConcurrentOperations — 250 operations × 50 threads  
+
+**Test Results**: 29/29 passed ✅
 
 ## Project Packages
 
@@ -171,14 +186,28 @@ if (order.getStatus().isTerminal()) {
 
 ## Build Artifacts
 
-- **JAR**: `target/order-service-1.0-SNAPSHOT-java8.jar`
+- **JAR**: `target/order-service-1.0-SNAPSHOT-java17.jar`
 - **Main Class**: `com.order.Main`
 - **Compiled Classes**: `target/classes`
 - **Test Classes**: `target/test-classes`
 
 ## Dependencies
 
-- JUnit 4.13.2 (test scope)
+- JUnit 5.9.2 Jupiter API (test scope)
+
+## Version History
+
+### v1.1.0 (Current) - Java 17 & JUnit 5 Migration
+- ✅ Upgraded from Java 8 to Java 17
+- ✅ Migrated from JUnit 4 to JUnit 5 (Jupiter API)
+- ✅ Updated Maven compiler plugins for Java 17 compatibility
+- ✅ Added 13 comprehensive concurrency tests
+- ✅ All 29 tests passing (22 unit + 7 concurrency)
+
+### v1.0.0 - Initial Release
+- Java 8 with JUnit 4
+- 16 unit tests covering CRUD operations and state machine
+- Layered architecture (Model → Service → Repository)
 
 ## Next Steps
 
