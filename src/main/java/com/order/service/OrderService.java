@@ -7,7 +7,11 @@ import com.order.model.OrderStatus;
 import com.order.repository.OrderRepository;
 
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Business logic service for order processing and state transitions.
@@ -17,9 +21,18 @@ import java.util.stream.Collectors;
  * - State machine validation for order transitions
  * - Automatic timestamp tracking via Order model
  * - Stream-based query operations for reporting
+ * - ATOMIC state transitions with per-order locking to prevent concurrent transition races
  */
 public class OrderService {
     private final OrderRepository repository;
+    
+    /**
+     * Per-order locks to ensure atomic state transitions.
+     * Each order ID gets its own lock object to synchronize concurrent transition attempts
+     * on that specific order. This prevents race conditions where multiple threads
+     * could attempt simultaneous state transitions on the same order.
+     */
+    private final Map<Long, Object> orderLocks = new ConcurrentHashMap<>();
 
     public OrderService(OrderRepository repository) {
         this.repository = repository;
@@ -61,7 +74,15 @@ public class OrderService {
 
     /**
      * Transitions an order to a new status with validation.
-     * Uses Optional chaining for clean error handling.
+     * ATOMIC OPERATION: The validation and state change happen as a single atomic unit,
+     * using per-order locking via an orderLocks map. This prevents race conditions where
+     * multiple threads could attempt simultaneous transitions on the same order.
+     *
+     * Pattern: Per-Object Locking (Condition Variable Pattern)
+     * When multiple threads attempt concurrent transitions on the same order:
+     * - Thread A acquires lock for orderId, retrieves order, validates and transitions successfully
+     * - Thread B waits for same lock, then retrieves (now modified) order, sees invalid transition, throws exception
+     * Result: Deterministic, only one thread succeeds per transition attempt.
      *
      * @param orderId the ID of the order
      * @param newStatus the target status
@@ -70,17 +91,27 @@ public class OrderService {
      * @throws InvalidTransitionException if transition is invalid
      */
     public Order transitionOrder(Long orderId, OrderStatus newStatus) {
-        // Retrieve and validate order using Optional
-        Order order = repository.findById(orderId)
-            .orElseThrow(() -> new OrderNotFoundException(orderId));
+        // Get or create a lock for this specific order ID
+        // computeIfAbsent ensures the lock is created atomically if not present
+        Object lock = orderLocks.computeIfAbsent(orderId, id -> new Object());
 
-        // Validate transition using Optional to safely chain
-        if (!order.getStatus().isValidTransition(newStatus)) {
-            throw new InvalidTransitionException(orderId, order.getStatus(), newStatus);
+        // ATOMIC BLOCK: Synchronize on the per-order lock
+        // All threads attempting to transition this order ID will serialize through this lock
+        synchronized (lock) {
+            // Retrieve the current state of the order
+            Order order = repository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+            // Validate transition - double-checked at atomic boundary
+            // Another thread may have transitioned this order while we were waiting for the lock
+            if (!order.getStatus().isValidTransition(newStatus)) {
+                throw new InvalidTransitionException(orderId, order.getStatus(), newStatus);
+            }
+
+            // Update status and persist atomically
+            order.setStatus(newStatus);
+            return repository.save(order);
         }
-
-        order.setStatus(newStatus);
-        return repository.save(order);
     }
 
     /**

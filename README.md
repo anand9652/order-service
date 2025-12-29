@@ -149,7 +149,85 @@ OrderRepository prodRepo = new FileBasedOrderRepository(
 OrderService service = new OrderService(prodRepo);
 ```
 
-## Prerequisites
+## Atomic State Transitions
+
+The `OrderService` implements **atomic state transitions** to ensure thread-safe concurrent updates to order states. This prevents race conditions where multiple threads might attempt to transition the same order simultaneously.
+
+### The Problem (Race Condition)
+
+Without atomic transitions, concurrent updates can cause inconsistent state:
+
+```
+Timeline:
+Thread A: Check PENDING → CONFIRMED is valid ✓
+Thread B: Check PENDING → CANCELLED is valid ✓
+Thread A: Set status = CONFIRMED
+Thread B: Set status = CANCELLED  ← Overwrites Thread A's change!
+Result: Indeterminate final state, lost update
+```
+
+### The Solution (Per-Order Locking)
+
+`OrderService` uses a **per-order lock pattern** (`Map<Long, Object> orderLocks`) to serialize concurrent transitions on the same order:
+
+```java
+public Order transitionOrder(Long orderId, OrderStatus newStatus) {
+    // Get or create a lock for this specific order ID
+    Object lock = orderLocks.computeIfAbsent(orderId, id -> new Object());
+
+    // ATOMIC BLOCK: Synchronize on the per-order lock
+    synchronized (lock) {
+        // 1. Retrieve current state
+        Order order = repository.findById(orderId)
+            .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        // 2. Validate transition (double-checked at atomic boundary)
+        if (!order.getStatus().isValidTransition(newStatus)) {
+            throw new InvalidTransitionException(...);
+        }
+
+        // 3. Update state and persist (atomically)
+        order.setStatus(newStatus);
+        return repository.save(order);
+    }
+}
+```
+
+### How It Works
+
+1. **Per-Order Lock**: Each order ID gets its own lock object via `computeIfAbsent()`
+2. **Atomic Block**: All three operations happen under a single synchronized lock:
+   - Read current state
+   - Validate transition
+   - Update and persist
+3. **Serialization**: Only one thread can hold a given order's lock at a time
+4. **State Visibility**: When a thread acquires the lock, it sees the most recent state
+
+### Example: Concurrent Transitions
+
+```
+Timeline with Atomic Locking:
+Thread A: Acquire lock for Order #1 ✓
+Thread B: Wait for lock on Order #1
+Thread A: Check PENDING → CONFIRMED is valid ✓, Update, Release lock
+Thread B: Acquire lock for Order #1 ✓
+Thread B: Check CONFIRMED → CANCELLED is valid ✓, Update, Release lock
+Result: Deterministic, thread-safe state machine
+```
+
+### Test Coverage
+
+The `AtomicTransitionTest` class validates atomic behavior with 5 comprehensive scenarios:
+
+| Test | Scenario | Validates |
+|------|----------|-----------|
+| `testOnlyOneTransitionSucceedsWhenMultipleThreadsAttemptSame` | 2 threads, conflicting transitions | Only one succeeds, other fails safely |
+| `testMultipleThreadsAttemptingDifferentSequences` | 3 threads, same transition attempt | Serialization prevents concurrent updates |
+| `testSequentialTransitionsAreAtomic` | 5 threads, full lifecycle sequence | Compound transitions remain atomic |
+| `testConcurrentUpdatesToDifferentOrders` | 3 threads, different orders | Independent orders don't interfere |
+| `testRapidConsecutiveTransitionAttempts` | 10 threads, rapid-fire attempts | Atomic behavior under high contention |
+
+
 
 - Java 17 or higher
 - Maven 3.6+
