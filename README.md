@@ -12,18 +12,22 @@ order-service-1/
 │   │   │   ├── Main.java                          # Entry point
 │   │   │   ├── App.java                           # Demo application
 │   │   │   ├── model/
-│   │   │   │   ├── Order.java                     # Order entity
-│   │   │   │   └── OrderStatus.java               # Order state enum
-│   │   │   ├── service/OrderService.java          # Business logic
+│   │   │   │   ├── Order.java                     # Order entity with timestamps
+│   │   │   │   └── OrderStatus.java               # Order state enum (7 states)
+│   │   │   ├── service/OrderService.java          # Business logic + Stream utilities
 │   │   │   ├── repository/
-│   │   │   │   ├── OrderRepository.java           # Interface
-│   │   │   │   └── InMemoryOrderRepository.java   # Implementation
+│   │   │   │   ├── OrderRepository.java           # Interface (unified API)
+│   │   │   │   ├── InMemoryOrderRepository.java   # Thread-safe in-memory store
+│   │   │   │   └── FileBasedOrderRepository.java  # JSON file-based persistence
 │   │   │   └── exception/OrderNotFoundException.java
 │   │   └── resources/application.properties
+│   ├── data/
+│   │   └── orders.json                            # Persistent JSON storage (created at runtime)
 │   └── test/
 │       ├── java/com/order/
-│       │   ├── OrderServiceTest.java              # Unit tests
-│       │   └── AppTest.java
+│       │   ├── OrderServiceTest.java              # 30 unit tests
+│       │   ├── ConcurrencyTest.java               # 7 concurrency tests
+│       │   └── FileBasedPersistenceTest.java      # 11 persistence tests
 │       └── resources/
 ├── pom.xml                                         # Maven configuration
 ├── README.md                                       # This file
@@ -112,6 +116,37 @@ public String toString() {
 ```java
 private final Map<Long, Order> store = new ConcurrentHashMap<>();
 private final AtomicLong idSeq = new AtomicLong(1);
+```
+
+## Persistence Layer
+
+The application supports **two persistence implementations** with identical interfaces:
+
+### InMemoryOrderRepository (Default)
+- **Thread-Safe**: Uses `ConcurrentHashMap` and `AtomicLong`
+- **Performance**: O(1) lookups, no I/O overhead
+- **Use Case**: Testing, development, ephemeral data
+- **Data Durability**: Lost on application restart
+
+### FileBasedOrderRepository (Persistent)
+- **Persistent**: Automatically saves orders to JSON file
+- **Format**: Human-readable JSON at `./data/orders.json`
+- **Thread-Safe**: Uses `ConcurrentHashMap` + file synchronization
+- **Use Case**: Production, data durability required
+- **Timestamps**: Preserves `createdAt` and `updatedAt` across restarts
+
+**Switching Between Repositories:**
+```java
+// Development
+OrderRepository devRepo = new InMemoryOrderRepository();
+
+// Production
+OrderRepository prodRepo = new FileBasedOrderRepository(
+    Paths.get("data", "orders.json")
+);
+
+// Use either with the same service code
+OrderService service = new OrderService(prodRepo);
 ```
 
 ## Prerequisites
@@ -331,16 +366,41 @@ if (order.getStatus().isTerminal()) {
 ✅ testGetTotalByStatus — Stream aggregation for financial reporting  
 ✅ testCountByStatus — Stream-based counting operations  
 
-**Test Results**: 37/37 passed ✅
+**Test Results**: 48/48 passed ✅
+- OrderServiceTest: 30/30 ✅
+- ConcurrencyTest: 7/7 ✅  
+- FileBasedPersistenceTest: 11/11 ✅
+
+**Concurrency Tests** (7 tests):
+✅ testConcurrentOrderCreation — Thread-safe ID generation  
+✅ testConcurrentOrderUpdates — ConcurrentHashMap concurrent access  
+✅ testConcurrentStatusTransitions — Multiple threads changing order states  
+✅ testConcurrentDeletion — Safe concurrent deletion  
+✅ testConcurrentFindById — Parallel lookups don't corrupt state  
+✅ testAtomicLongIdGeneration — Lock-free ID generation under contention  
+✅ testFindAllConcurrency — Safe iteration while modifying  
+
+**File-Based Persistence Tests** (11 tests):
+✅ testCreateOrderPersistsToFile — JSON serialization works  
+✅ testOrderSurvivesPersistence — Orders reload correctly from JSON  
+✅ testMultipleOrdersPersist — Array persistence handles multiple items  
+✅ testOrderDeletionPersists — Deletion reflected in JSON  
+✅ testStatusTransitionPersists — State changes preserved across restarts  
+✅ testTimestampsPreservedOnPersistence — createdAt/updatedAt restored exactly  
+✅ testIdGenerationPersistsAcrossRestarts — nextId sequence continues  
+✅ testConcurrentWritesSafety — Concurrent access to file repository  
+✅ testJsonFormatIsValid — Generated JSON is well-formed  
+✅ testClearAllRemovesFile — clearAll() properly removes data file  
+✅ testSpecialCharactersInCustomerName — Escape handling in JSON strings  
 
 ## Project Packages
 
 | Package | Purpose |
 |---------|---------|
 | `com.order` | Root package with Main and App classes |
-| `com.order.model` | Domain entities (Order, OrderStatus) |
-| `com.order.service` | Business logic layer |
-| `com.order.repository` | Data access layer |
+| `com.order.model` | Domain entities (Order with timestamps, OrderStatus) |
+| `com.order.service` | Business logic layer with stream utilities |
+| `com.order.repository` | Data access layer (InMemory + FileBasedOrderRepository) |
 | `com.order.exception` | Custom exceptions |
 
 ## Build Artifacts
@@ -349,6 +409,7 @@ if (order.getStatus().isTerminal()) {
 - **Main Class**: `com.order.Main`
 - **Compiled Classes**: `target/classes`
 - **Test Classes**: `target/test-classes`
+- **Data Directory**: `data/orders.json` (created at runtime for persistence)
 
 ## Dependencies
 
@@ -356,7 +417,13 @@ if (order.getStatus().isTerminal()) {
 
 ## Version History
 
-### v1.1.0 (Current) - Java 17 Full Modernization
+### v1.2.0 (Current) - File-Based Persistence
+- ✅ Added FileBasedOrderRepository for JSON-based persistence
+- ✅ Implemented Order.fromPersistence() factory method for timestamp restoration
+- ✅ 11 new persistence tests covering all scenarios
+- ✅ Dual-repository support with interface-based switching
+
+### v1.1.0 - Java 17 Full Modernization
 - ✅ Upgraded from Java 8 to Java 17
 - ✅ Migrated from JUnit 4 to JUnit 5 (Jupiter API)
 - ✅ Updated Maven compiler plugins for Java 17 compatibility
