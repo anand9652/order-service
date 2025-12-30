@@ -9,25 +9,31 @@ order-service-1/
 ├── src/
 │   ├── main/
 │   │   ├── java/com/order/
-│   │   │   ├── Main.java                          # Entry point
-│   │   │   ├── App.java                           # Demo application
+│   │   │   ├── Main.java                          # Entry point with demo scenarios
 │   │   │   ├── model/
-│   │   │   │   ├── Order.java                     # Order entity with timestamps
-│   │   │   │   └── OrderStatus.java               # Order state enum (7 states)
-│   │   │   ├── service/OrderService.java          # Business logic + Stream utilities
+│   │   │   │   ├── Order.java                     # Order entity with status history tracking
+│   │   │   │   ├── OrderStatus.java               # Order state machine (5 states: CREATED, PAID, SHIPPED, DELIVERED, CANCELLED)
+│   │   │   │   └── StatusTransition.java          # Immutable audit trail record (status + timestamp)
+│   │   │   ├── service/
+│   │   │   │   ├── OrderService.java              # Business logic + Stream utilities + atomic transitions
+│   │   │   │   └── OrderScheduler.java            # Background processing (auto-transitions PAID → SHIPPED)
 │   │   │   ├── repository/
 │   │   │   │   ├── OrderRepository.java           # Interface (unified API)
 │   │   │   │   ├── InMemoryOrderRepository.java   # Thread-safe in-memory store
-│   │   │   │   └── FileBasedOrderRepository.java  # JSON file-based persistence
-│   │   │   └── exception/OrderNotFoundException.java
+│   │   │   │   └── FileBasedOrderRepository.java  # JSON file-based persistence with history
+│   │   │   └── exception/
+│   │   │       ├── OrderNotFoundException.java
+│   │   │       └── InvalidTransitionException.java
 │   │   └── resources/application.properties
 │   ├── data/
 │   │   └── orders.json                            # Persistent JSON storage (created at runtime)
 │   └── test/
 │       ├── java/com/order/
-│       │   ├── OrderServiceTest.java              # 30 unit tests
+│       │   ├── OrderServiceTest.java              # 30 service tests
 │       │   ├── ConcurrencyTest.java               # 7 concurrency tests
-│       │   └── FileBasedPersistenceTest.java      # 11 persistence tests
+│       │   ├── FileBasedPersistenceTest.java      # 11 persistence tests
+│       │   ├── AtomicTransitionTest.java          # 5 atomic transition tests
+│       │   └── OrderSchedulerTest.java            # 12 scheduler tests
 │       └── resources/
 ├── pom.xml                                         # Maven configuration
 ├── README.md                                       # This file
@@ -58,7 +64,10 @@ public class Order {
     public Order(Long id, String customer, double total, OrderStatus status) {
         this.createdAt = Instant.now();
         this.updatedAt = Instant.now();
-        this.status = Objects.requireNonNullElse(status, OrderStatus.PENDING);
+        this.status = Objects.requireNonNullElse(status, OrderStatus.CREATED);
+        // Initialize status history with creation event
+        this.statusHistory = Collections.synchronizedList(new ArrayList<>());
+        initializeStatusHistory();
     }
 }
 ```
@@ -227,6 +236,54 @@ The `AtomicTransitionTest` class validates atomic behavior with 5 comprehensive 
 | `testConcurrentUpdatesToDifferentOrders` | 3 threads, different orders | Independent orders don't interfere |
 | `testRapidConsecutiveTransitionAttempts` | 10 threads, rapid-fire attempts | Atomic behavior under high contention |
 
+## Background Processing - OrderScheduler
+
+The `OrderScheduler` service automatically processes orders in the PAID state, transitioning them to SHIPPED after a configurable delay. This enables asynchronous order fulfillment without manual intervention.
+
+### Features
+
+- **Automatic Transitions**: Monitors PAID orders and transitions them to SHIPPED after 5 minutes
+- **Per-Minute Execution**: Scheduler runs once per minute to check for orders ready to transition
+- **Duplicate Prevention**: Tracks processed orders to prevent redundant transitions
+- **Thread-Safe**: Uses `ScheduledExecutorService` for concurrent-safe scheduling
+- **Graceful Shutdown**: Properly stops background processing on application shutdown
+
+### How It Works
+
+```java
+// Start the scheduler in your application
+OrderScheduler scheduler = new OrderScheduler(orderService, 5);  // 5 minute delay
+scheduler.start();
+
+// Orders transition automatically:
+// 1. Order created in CREATED state
+// 2. Service transitions to PAID (via OrderService.payOrder())
+// 3. Scheduler detects PAID order and waits 5 minutes
+// 4. Scheduler automatically transitions to SHIPPED
+// 5. Manual call to OrderService.deliverOrder() completes the flow
+
+// Shutdown when application stops
+scheduler.shutdown();
+```
+
+### Scheduler Test Coverage
+
+The `OrderSchedulerTest` class validates scheduler behavior with 12 comprehensive tests:
+
+| Test | Purpose |
+|------|---------|
+| `testSchedulerStartsAndProcessesOrders` | Verifies scheduler initialization and operation |
+| `testAutomaticTransitionAfterDelay` | Order transitions from PAID to SHIPPED after delay |
+| `testDuplicatePreventionTracking` | Same order not processed twice |
+| `testSchedulerDoesNotTransitionRecentOrders` | Orders < 5 min old are skipped |
+| `testSchedulerDoesNotTransitionNonPaidOrders` | Only PAID orders are eligible |
+| `testOnlyPaidOrdersAreTransitioned` | Other statuses are ignored |
+| `testProcessedOrderCountIsAccurate` | Correct count of processed orders |
+| `testSchedulerWithCustomDelay` | Custom delay configuration works |
+| `testMultipleOrdersProcessedCorrectly` | Batch processing of multiple orders |
+| `testSchedulerGracefulShutdown` | Clean shutdown without data loss |
+| `testMultipleSchedulersAreIndependent` | Multiple schedulers don't interfere |
+| `testConcurrentSchedulerAndServiceAccess` | Thread-safe concurrent operations |
 
 
 - Java 17 or higher
@@ -354,47 +411,78 @@ Order order = new Order(null, "John Doe", 99.99);
 // - id (Long): Auto-generated unique identifier
 // - customer (String): Customer name
 // - total (double): Order total amount
-// - status (OrderStatus): Current order state (default: PENDING)
+// - status (OrderStatus): Current order state (default: CREATED)
+// - statusHistory (List<StatusTransition>): Immutable audit trail with timestamps
 ```
 
-### OrderStatus Enum
+### OrderStatus Enum - Simplified 5-State Machine
 
-A state machine implementation for the order lifecycle:
+A streamlined state machine implementation for the order lifecycle with complete audit trail support:
 
-| Status | Description | Valid Transitions |
-|--------|-------------|-------------------|
-| **PENDING** | Order created, awaiting payment | CONFIRMED, CANCELLED, FAILED |
-| **CONFIRMED** | Payment received, order confirmed | PROCESSING, CANCELLED |
-| **PROCESSING** | Order is being processed | SHIPPED, CANCELLED |
-| **SHIPPED** | Order has been shipped | DELIVERED |
-| **DELIVERED** | Order delivered to customer | _(Terminal)_ |
-| **CANCELLED** | Order cancelled | _(Terminal)_ |
-| **FAILED** | Order processing failed | _(Terminal)_ |
+| Status | Description | Valid Transitions | Is Terminal |
+|--------|-------------|-------------------|---|
+| **CREATED** | Order created, awaiting payment | PAID, CANCELLED | ❌ |
+| **PAID** | Payment received and processed | SHIPPED, CANCELLED | ❌ |
+| **SHIPPED** | Order has been dispatched | DELIVERED | ❌ |
+| **DELIVERED** | Order delivered to customer | _(none)_ | ✅ |
+| **CANCELLED** | Order cancelled at any stage | _(none)_ | ✅ |
 
-**State Transition Example:**
+**Simplified State Flow:**
 ```
-PENDING → CONFIRMED → PROCESSING → SHIPPED → DELIVERED ✓
-PENDING → CANCELLED (terminal) ✓
-PROCESSING → PENDING ✗ (invalid transition)
+Standard Path:
+CREATED → PAID → SHIPPED → DELIVERED ✓
+
+Cancellation Path (from any non-terminal state):
+CREATED → CANCELLED ✓
+PAID → CANCELLED ✓
+
+Invalid Transitions (blocked):
+PAID → CREATED ✗ (cannot go backwards)
+DELIVERED → PAID ✗ (terminal state)
+CANCELLED → SHIPPED ✗ (terminal state)
+```
+
+### Status History Tracking
+
+Each order maintains a complete audit trail of all status transitions with timestamps:
+
+```java
+Order order = new Order(null, "Jane Doe", 150.0);
+// Created with status: CREATED, History: [CREATED (2024-01-01T12:00:00Z)]
+
+order.setStatus(OrderStatus.PAID);
+// Updated status: PAID, History: [CREATED (2024-01-01T12:00:00Z), PAID (2024-01-01T12:05:00Z)]
+
+order.setStatus(OrderStatus.SHIPPED);
+// Status: SHIPPED, History: [CREATED..., PAID..., SHIPPED (2024-01-01T12:10:00Z)]
+
+// Query status history
+List<StatusTransition> history = order.getStatusHistory();
+for (StatusTransition st : history) {
+    System.out.println(st.getStatus() + " at " + st.getTimestamp());
+}
+
+// Get formatted history string
+String historyString = order.getStatusHistoryAsString();
+// Output: "CREATED (2024-01-01T12:00:00Z) → PAID (2024-01-01T12:05:00Z) → SHIPPED (2024-01-01T12:10:00Z)"
 ```
 
 **Usage:**
 ```java
 Order order = new Order(null, "Jane Doe", 150.0);
-// order.getStatus() == OrderStatus.PENDING
+// order.getStatus() == OrderStatus.CREATED
 
-// Transition to next state
-boolean success = order.transitionTo(OrderStatus.CONFIRMED);
-if (success) {
-    System.out.println("Order confirmed!");
-} else {
-    System.out.println("Invalid transition!");
-}
+// Transition to next state (atomic)
+order.setStatus(OrderStatus.PAID);
+assertEquals(OrderStatus.PAID, order.getStatus());
 
 // Check if terminal
 if (order.getStatus().isTerminal()) {
     System.out.println("Order processing complete");
 }
+
+// Automatic history recording on each transition
+assertEquals(2, order.getStatusHistory().size()); // CREATED + PAID
 ```
 
 ## Test Cases (37 Total)
@@ -411,23 +499,38 @@ if (order.getStatus().isTerminal()) {
 ✅ testOrderToString — Validates string representation  
 
 **Order State Machine (7 tests)**:
-✅ testOrderInitialStatus — Verifies orders start in PENDING state  
-✅ testValidStatusTransition — Validates allowed transitions  
+✅ testOrderInitialStatus — Verifies orders start in CREATED state  
+✅ testValidStatusTransition — Validates allowed transitions (CREATED→PAID, PAID→SHIPPED, etc.)  
 ✅ testInvalidStatusTransition — Rejects invalid transitions  
-✅ testCompleteOrderWorkflow — Full lifecycle: PENDING → CONFIRMED → PROCESSING → SHIPPED → DELIVERED  
+✅ testCompleteOrderWorkflow — Full lifecycle: CREATED → PAID → SHIPPED → DELIVERED  
 ✅ testOrderStatusTerminalStates — Validates terminal state detection  
-✅ testOrderCancellationFromPending — Tests cancellation flow  
+✅ testOrderCancellationFromPending — Tests cancellation flow from any state  
 ✅ testOrderStatusDisplayInfo — Validates status display names and descriptions  
 
-**Concurrency Tests (13 tests)**:
-✅ testInvalidTransitionInService — Invalid state transitions in service layer  
-✅ testValidTransitionInService — Valid state transitions in service  
-✅ testFullOrderLifecycleInService — Complete workflow through service  
-✅ testCannotTransitionFromDelivered — Terminal state protection  
-✅ testInvalidTransitionExceptionDetails — Exception context validation  
-✅ testCancelOrderAfterConfirmed — Order cancellation workflow  
+**Status History Tests (5 tests - NEW)**:
+✅ testStatusHistoryTracking — Verifies immutable status history with timestamps  
+✅ testHistoryRecordsAllTransitions — All transitions recorded in order  
+✅ testGetStatusHistory — Returns unmodifiable list of transitions  
+✅ testGetStatusHistoryAsString — Formatted history display  
+✅ testStatusHistoryThreadSafety — Concurrent history access is safe  
+
+**Concurrency Tests (7 tests)**:
 ✅ testConcurrentOrderCreation — 10 threads × 10 orders (IDs unique & consistent)  
 ✅ testConcurrentOrderRetrieval — 5 threads reading same order (data consistency)  
+✅ testConcurrentSequentialTransitions — Thread-safe state transitions  
+✅ testConcurrentAccessToTerminalOrders — Terminal state protection under concurrency  
+✅ testRaceConditionPrevention — Per-order locking prevents race conditions  
+✅ testOrderLockCreation — Verify per-order lock mechanism  
+✅ testLargeScaleConcurrency — 20 threads × 100 operations  
+
+**Atomic Transition Tests (5 tests - NEW)**:
+✅ testOnlyOneTransitionSucceedsWhenMultipleThreadsAttemptSame — Atomic serialization  
+✅ testInvalidTransitionsAreRejected — Validation at atomic boundary  
+✅ testTransitionPreservesImmutability — Immutable fields cannot be modified  
+✅ testDifferentOrdersCanTransitionConcurrently — Non-blocking across different orders  
+✅ testLockCleanupDoesNotAffectConcurrency — Lock resource management  
+
+**File Persistence Tests (11 tests)**:
 ✅ testConcurrentTransitionsOnSameOrder — Race condition prevention  
 ✅ testConcurrentSequentialTransitions — Valid workflows under concurrency  
 ✅ testHighConcurrencyMixedOperations — 100 operations × 20 threads  
