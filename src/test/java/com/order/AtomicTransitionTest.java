@@ -37,7 +37,7 @@ public class AtomicTransitionTest {
         Order order = service.createOrder(new Order(null, "Test Customer", 100.0));
         Long orderId = order.getId();
 
-        // Thread A will try: PENDING → CONFIRMED
+        // Thread A will try: CREATED → PAID
         // Thread B will try: PENDING → FAILED
         // Both are valid from PENDING, so both CAN succeed, BUT they serialize through the atomic lock.
         // After Thread A transitions to CONFIRMED, if Thread B still tries FAILED, that becomes invalid.
@@ -55,7 +55,7 @@ public class AtomicTransitionTest {
         Thread threadA = new Thread(() -> {
             try {
                 startSignal.await();  // Wait for all threads to be ready
-                service.confirmOrder(orderId);  // PENDING → CONFIRMED
+                service.payOrder(orderId);  // CREATED → PAID
                 successCount.incrementAndGet();
             } catch (InvalidTransitionException e) {
                 failCount.incrementAndGet();
@@ -71,7 +71,7 @@ public class AtomicTransitionTest {
                 startSignal.await();  // Wait for all threads to be ready
                 // Try to transition to FAILED - valid from PENDING, but only if we get the lock first!
                 // If threadA succeeds first, status becomes CONFIRMED, and CONFIRMED → FAILED is invalid
-                service.transitionOrder(orderId, OrderStatus.FAILED);
+                service.transitionOrder(orderId, OrderStatus.CANCELLED);
                 successCount.incrementAndGet();
             } catch (InvalidTransitionException e) {
                 failCount.incrementAndGet();
@@ -96,8 +96,8 @@ public class AtomicTransitionTest {
         // or FAILED (if B somehow won, but that can't happen because CONFIRMED comes before FAILED wins)
         Order finalOrder = service.getOrder(orderId);
         assertTrue(
-            finalOrder.getStatus() == OrderStatus.CONFIRMED || 
-            finalOrder.getStatus() == OrderStatus.FAILED,
+            finalOrder.getStatus() == OrderStatus.PAID || 
+            finalOrder.getStatus() == OrderStatus.CANCELLED,
             "Final status must be either CONFIRMED or FAILED"
         );
     }
@@ -112,8 +112,8 @@ public class AtomicTransitionTest {
         // Due to atomic locking, they serialize and most will fail because the order state
         // will change after the first thread.
         //
-        // Thread 1: PENDING → CONFIRMED (succeeds)
-        // Thread 2: PENDING → CONFIRMED (fails - already CONFIRMED)
+        // Thread 1: CREATED → PAID (succeeds)
+        // Thread 2: CREATED → PAID (fails - already CONFIRMED)
         // Thread 3: PENDING → CANCELLED (fails - already CONFIRMED, and CONFIRMED→CANCELLED is valid but one thread already moved forward)
         //
         // This validates that:
@@ -131,7 +131,7 @@ public class AtomicTransitionTest {
         Runnable confirmAttempt = () -> {
             try {
                 startSignal.await();
-                service.confirmOrder(orderId);  // PENDING → CONFIRMED
+                service.payOrder(orderId);  // CREATED → PAID
                 successCount.incrementAndGet();
             } catch (InvalidTransitionException | OrderNotFoundException e) {
                 failCount.incrementAndGet();
@@ -163,7 +163,7 @@ public class AtomicTransitionTest {
         Order order = service.createOrder(new Order(null, "Sequential Test", 300.0));
         Long orderId = order.getId();
 
-        // Multiple threads try the full sequence: PENDING → CONFIRMED → PROCESSING → SHIPPED
+        // Multiple threads try the full sequence: CREATED → PAID → PROCESSING → SHIPPED
         // Simulate a race condition where threads try to advance the state
         int numThreads = 5;
         AtomicInteger completedSequences = new AtomicInteger(0);
@@ -174,8 +174,8 @@ public class AtomicTransitionTest {
             try {
                 startSignal.await();
                 try {
-                    service.confirmOrder(orderId);
-                    service.processOrder(orderId);
+                    service.payOrder(orderId);
+                    service.shipOrder(orderId);
                     service.shipOrder(orderId);
                     completedSequences.incrementAndGet();
                 } catch (InvalidTransitionException e) {
@@ -203,7 +203,7 @@ public class AtomicTransitionTest {
 
         // Final state should be deterministic
         Order finalOrder = service.getOrder(orderId);
-        assertNotEquals(OrderStatus.PENDING, finalOrder.getStatus(),
+        assertNotEquals(OrderStatus.CREATED, finalOrder.getStatus(),
             "Order should have transitioned");
     }
 
@@ -221,7 +221,7 @@ public class AtomicTransitionTest {
         // Each transition is valid for PENDING state
         Thread t1 = new Thread(() -> {
             try {
-                service.confirmOrder(order1.getId());  // PENDING → CONFIRMED
+                service.payOrder(order1.getId());  // CREATED → PAID
                 successCount.incrementAndGet();
             } finally {
                 doneSignal.countDown();
@@ -239,7 +239,7 @@ public class AtomicTransitionTest {
 
         Thread t3 = new Thread(() -> {
             try {
-                service.transitionOrder(order3.getId(), OrderStatus.FAILED);  // PENDING → FAILED
+                service.transitionOrder(order3.getId(), OrderStatus.CANCELLED);  // PENDING → FAILED
                 successCount.incrementAndGet();
             } finally {
                 doneSignal.countDown();
@@ -260,7 +260,7 @@ public class AtomicTransitionTest {
         Order order = service.createOrder(new Order(null, "Rapid Test", 150.0));
         Long orderId = order.getId();
 
-        // Rapid fire: 10 threads all trying to transition PENDING → CONFIRMED
+        // Rapid fire: 10 threads all trying to transition CREATED → PAID
         int numThreads = 10;
         AtomicInteger successCount = new AtomicInteger(0);
         CountDownLatch startSignal = new CountDownLatch(1);
@@ -269,7 +269,7 @@ public class AtomicTransitionTest {
         Runnable rapidTransition = () -> {
             try {
                 startSignal.await();
-                service.confirmOrder(orderId);
+                service.payOrder(orderId);
                 successCount.incrementAndGet();
             } catch (InvalidTransitionException e) {
                 // Expected - order already transitioned
@@ -294,6 +294,6 @@ public class AtomicTransitionTest {
 
         // Order should be CONFIRMED
         Order finalOrder = service.getOrder(orderId);
-        assertEquals(OrderStatus.CONFIRMED, finalOrder.getStatus());
+        assertEquals(OrderStatus.PAID, finalOrder.getStatus());
     }
 }

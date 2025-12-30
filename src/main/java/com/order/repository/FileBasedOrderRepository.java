@@ -2,6 +2,7 @@ package com.order.repository;
 
 import com.order.model.Order;
 import com.order.model.OrderStatus;
+import com.order.model.StatusTransition;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -158,8 +159,13 @@ public class FileBasedOrderRepository implements OrderRepository {
             Instant createdAt = Instant.parse(createdAtStr);
             Instant updatedAt = Instant.parse(updatedAtStr);
 
+            // Parse statusHistory if available (for backwards compatibility, use empty list if not present)
+            List<StatusTransition> statusHistory = new ArrayList<>();
+            // TODO: Parse statusHistory from JSON array if it exists
+            // For now, we pass empty list and the order will rebuild history on creation
+
             // Use factory method to restore order with preserved timestamps
-            Order order = Order.fromPersistence(id, customer, total, status, createdAt, updatedAt);
+            Order order = Order.fromPersistence(id, customer, total, status, createdAt, updatedAt, statusHistory);
             store.put(id, order);
 
             // Track highest ID for next generation

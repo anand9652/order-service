@@ -5,13 +5,11 @@ package com.order.model;
  * Defines the valid transitions between order states.
  */
 public enum OrderStatus {
-    PENDING("Pending", "Order created, awaiting payment"),
-    CONFIRMED("Confirmed", "Payment received, order confirmed"),
-    PROCESSING("Processing", "Order is being processed"),
+    CREATED("Created", "Order created, awaiting payment"),
+    PAID("Paid", "Payment processed, ready for shipment"),
     SHIPPED("Shipped", "Order has been shipped"),
     DELIVERED("Delivered", "Order delivered to customer"),
-    CANCELLED("Cancelled", "Order cancelled by customer or system"),
-    FAILED("Failed", "Order processing failed");
+    CANCELLED("Cancelled", "Order cancelled by customer or system");
 
     private final String displayName;
     private final String description;
@@ -31,23 +29,24 @@ public enum OrderStatus {
 
     /**
      * Validates if a transition from current state to next state is allowed.
+     * 
+     * Valid transitions:
+     * - CREATED → PAID → SHIPPED → DELIVERED
+     * - CREATED → CANCELLED
      *
      * @param nextStatus the target status
      * @return true if transition is allowed, false otherwise
      */
     public boolean isValidTransition(OrderStatus nextStatus) {
         switch (this) {
-            case PENDING:
-                return nextStatus == CONFIRMED || nextStatus == CANCELLED || nextStatus == FAILED;
-            case CONFIRMED:
-                return nextStatus == PROCESSING || nextStatus == CANCELLED;
-            case PROCESSING:
+            case CREATED:
+                return nextStatus == PAID || nextStatus == CANCELLED;
+            case PAID:
                 return nextStatus == SHIPPED || nextStatus == CANCELLED;
             case SHIPPED:
                 return nextStatus == DELIVERED;
             case DELIVERED:
             case CANCELLED:
-            case FAILED:
                 return false; // Terminal states
             default:
                 return false;
@@ -60,6 +59,6 @@ public enum OrderStatus {
      * @return true if terminal, false otherwise
      */
     public boolean isTerminal() {
-        return this == DELIVERED || this == CANCELLED || this == FAILED;
+        return this == DELIVERED || this == CANCELLED;
     }
 }

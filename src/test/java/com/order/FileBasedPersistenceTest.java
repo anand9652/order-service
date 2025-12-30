@@ -107,15 +107,16 @@ public class FileBasedPersistenceTest {
         Order created = service.createOrder(order);
         Long id = created.getId();
 
-        service.confirmOrder(id);
-        service.processOrder(id);
+        service.payOrder(id);
+        service.transitionOrder(id, OrderStatus.PAID);
+        service.shipOrder(id);
 
         // Reload from file
         OrderRepository newRepository = new FileBasedOrderRepository(repository.getDataFilePath());
         OrderService newService = new OrderService(newRepository);
 
         Order restored = newService.getOrder(id);
-        assertEquals(OrderStatus.PROCESSING, restored.getStatus());
+        assertEquals(OrderStatus.SHIPPED, restored.getStatus());
     }
 
     @Test

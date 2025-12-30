@@ -119,22 +119,22 @@ public class OrderServiceTest {
     @Test
     void testOrderInitialStatus() {
         Order order = new Order(null, "Iris", 120.0);
-        assertEquals(OrderStatus.PENDING, order.getStatus());
+        assertEquals(OrderStatus.CREATED, order.getStatus());
     }
 
     @Test
     void testValidStatusTransition() {
-        Order order = new Order(1L, "Jack", 180.0, OrderStatus.PENDING);
-        boolean result = order.transitionTo(OrderStatus.CONFIRMED);
+        Order order = new Order(1L, "Jack", 180.0, OrderStatus.CREATED);
+        boolean result = order.transitionTo(OrderStatus.PAID);
 
         assertTrue(result);
-        assertEquals(OrderStatus.CONFIRMED, order.getStatus());
+        assertEquals(OrderStatus.PAID, order.getStatus());
     }
 
     @Test
     void testInvalidStatusTransition() {
         Order order = new Order(2L, "Karen", 220.0, OrderStatus.DELIVERED);
-        boolean result = order.transitionTo(OrderStatus.PENDING);
+        boolean result = order.transitionTo(OrderStatus.CREATED);
 
         assertFalse(result);
         assertEquals(OrderStatus.DELIVERED, order.getStatus());
@@ -144,11 +144,15 @@ public class OrderServiceTest {
     void testCompleteOrderWorkflow() {
         Order order = new Order(null, "Leo", 350.0);
         
-        assertTrue(order.transitionTo(OrderStatus.CONFIRMED));
-        assertEquals(OrderStatus.CONFIRMED, order.getStatus());
+        assertTrue(order.transitionTo(OrderStatus.PAID));
+        assertEquals(OrderStatus.PAID, order.getStatus());
         
-        assertTrue(order.transitionTo(OrderStatus.PROCESSING));
-        assertEquals(OrderStatus.PROCESSING, order.getStatus());
+        // New state machine: CONFIRMED → PAID → PROCESSING
+        assertTrue(order.transitionTo(OrderStatus.PAID));
+        assertEquals(OrderStatus.PAID, order.getStatus());
+        
+        assertTrue(order.transitionTo(OrderStatus.SHIPPED));
+        assertEquals(OrderStatus.SHIPPED, order.getStatus());
         
         assertTrue(order.transitionTo(OrderStatus.SHIPPED));
         assertEquals(OrderStatus.SHIPPED, order.getStatus());
@@ -156,23 +160,23 @@ public class OrderServiceTest {
         assertTrue(order.transitionTo(OrderStatus.DELIVERED));
         assertEquals(OrderStatus.DELIVERED, order.getStatus());
         
-        assertFalse(order.transitionTo(OrderStatus.PENDING));
+        assertFalse(order.transitionTo(OrderStatus.CREATED));
     }
 
     @Test
     void testOrderStatusTerminalStates() {
-        assertFalse(OrderStatus.PENDING.isTerminal());
-        assertFalse(OrderStatus.CONFIRMED.isTerminal());
-        assertFalse(OrderStatus.PROCESSING.isTerminal());
+        assertFalse(OrderStatus.CREATED.isTerminal());
+        assertFalse(OrderStatus.PAID.isTerminal());
+        assertFalse(OrderStatus.SHIPPED.isTerminal());
         assertFalse(OrderStatus.SHIPPED.isTerminal());
         assertTrue(OrderStatus.DELIVERED.isTerminal());
         assertTrue(OrderStatus.CANCELLED.isTerminal());
-        assertTrue(OrderStatus.FAILED.isTerminal());
+        assertTrue(OrderStatus.CANCELLED.isTerminal());
     }
 
     @Test
     void testOrderCancellationFromPending() {
-        Order order = new Order(3L, "Mia", 275.0, OrderStatus.PENDING);
+        Order order = new Order(3L, "Mia", 275.0, OrderStatus.CREATED);
         
         assertTrue(order.transitionTo(OrderStatus.CANCELLED));
         assertEquals(OrderStatus.CANCELLED, order.getStatus());
@@ -181,7 +185,7 @@ public class OrderServiceTest {
 
     @Test
     void testOrderStatusDisplayInfo() {
-        OrderStatus status = OrderStatus.CONFIRMED;
+        OrderStatus status = OrderStatus.PAID;
         assertNotNull(status.getDisplayName());
         assertNotNull(status.getDescription());
         assertEquals("Confirmed", status.getDisplayName());
@@ -203,8 +207,8 @@ public class OrderServiceTest {
         Order order = new Order(null, "Olivia", 400.0);
         Order created = service.createOrder(order);
 
-        Order confirmed = service.confirmOrder(created.getId());
-        assertEquals(OrderStatus.CONFIRMED, confirmed.getStatus());
+        Order confirmed = service.payOrder(created.getId());
+        assertEquals(OrderStatus.PAID, confirmed.getStatus());
     }
 
     @Test
@@ -212,11 +216,15 @@ public class OrderServiceTest {
         Order order = new Order(null, "Peter", 500.0);
         Order created = service.createOrder(order);
 
-        Order confirmed = service.confirmOrder(created.getId());
-        assertEquals(OrderStatus.CONFIRMED, confirmed.getStatus());
+        Order confirmed = service.payOrder(created.getId());
+        assertEquals(OrderStatus.PAID, confirmed.getStatus());
 
-        Order processing = service.processOrder(created.getId());
-        assertEquals(OrderStatus.PROCESSING, processing.getStatus());
+        // New workflow: need to transition through PAID before PROCESSING
+        Order paid = service.transitionOrder(created.getId(), OrderStatus.PAID);
+        assertEquals(OrderStatus.PAID, paid.getStatus());
+
+        Order processing = service.shipOrder(created.getId());
+        assertEquals(OrderStatus.SHIPPED, processing.getStatus());
 
         Order shipped = service.shipOrder(created.getId());
         assertEquals(OrderStatus.SHIPPED, shipped.getStatus());
@@ -231,8 +239,9 @@ public class OrderServiceTest {
         Order order = new Order(null, "Quinn", 250.0);
         Order created = service.createOrder(order);
 
-        service.confirmOrder(created.getId());
-        service.processOrder(created.getId());
+        service.payOrder(created.getId());
+        service.transitionOrder(created.getId(), OrderStatus.PAID);
+        service.shipOrder(created.getId());
         service.shipOrder(created.getId());
         service.deliverOrder(created.getId());
 
@@ -251,7 +260,7 @@ public class OrderServiceTest {
         });
         
         assertEquals(created.getId(), e.getOrderId());
-        assertEquals(OrderStatus.PENDING, e.getCurrentStatus());
+        assertEquals(OrderStatus.CREATED, e.getCurrentStatus());
         assertEquals(OrderStatus.SHIPPED, e.getRequestedStatus());
         assertNotNull(e.getDetailedMessage());
         assertTrue(e.getDetailedMessage().contains("Order ID: " + created.getId()));
@@ -262,11 +271,12 @@ public class OrderServiceTest {
         Order order = new Order(null, "Sam", 175.0);
         Order created = service.createOrder(order);
 
-        service.confirmOrder(created.getId());
-        service.processOrder(created.getId());
+        service.payOrder(created.getId());
+        service.transitionOrder(created.getId(), OrderStatus.PAID);
+        service.shipOrder(created.getId());
         
         assertThrows(InvalidTransitionException.class, () -> {
-            service.processOrder(created.getId());
+            service.shipOrder(created.getId());
         });
     }
 
@@ -292,7 +302,7 @@ public class OrderServiceTest {
         var initialUpdatedAt = created.getUpdatedAt();
 
         Thread.sleep(10); // Small delay to ensure timestamp difference
-        service.confirmOrder(created.getId());
+        service.payOrder(created.getId());
         
         Order updated = service.getOrder(created.getId());
         assertEquals(createdAtTime, updated.getCreatedAt());
@@ -304,7 +314,7 @@ public class OrderServiceTest {
         Order deliveredOrder = new Order(null, "Terminal", 100.0, OrderStatus.DELIVERED);
         assertTrue(deliveredOrder.isTerminalState());
 
-        Order pendingOrder = new Order(null, "Active", 100.0, OrderStatus.PENDING);
+        Order pendingOrder = new Order(null, "Active", 100.0, OrderStatus.CREATED);
         assertFalse(pendingOrder.isTerminalState());
     }
 
@@ -322,12 +332,12 @@ public class OrderServiceTest {
     @Test
     void testGetOrdersByStatus() {
         Order order1 = service.createOrder(new Order(null, "Order1", 100.0));
-        Order order2 = service.createOrder(new Order(null, "Order2", 200.0));
+        service.createOrder(new Order(null, "Order2", 200.0));
         
-        service.confirmOrder(order1.getId());
+        service.payOrder(order1.getId());
 
-        var pendingOrders = service.getOrdersByStatus(OrderStatus.PENDING);
-        var confirmedOrders = service.getOrdersByStatus(OrderStatus.CONFIRMED);
+        var pendingOrders = service.getOrdersByStatus(OrderStatus.CREATED);
+        var confirmedOrders = service.getOrdersByStatus(OrderStatus.PAID);
 
         assertEquals(1, pendingOrders.size());
         assertEquals(1, confirmedOrders.size());
@@ -342,8 +352,9 @@ public class OrderServiceTest {
         service.createOrder(new Order(null, "Order3", 300.0));
 
         // Complete order1 -> DELIVERED
-        service.confirmOrder(order1.getId());
-        service.processOrder(order1.getId());
+        service.payOrder(order1.getId());
+        service.transitionOrder(order1.getId(), OrderStatus.PAID);
+        service.shipOrder(order1.getId());
         service.shipOrder(order1.getId());
         service.deliverOrder(order1.getId());
 
@@ -366,21 +377,21 @@ public class OrderServiceTest {
         service.createOrder(new Order(null, "Order_" + timestamp + "_2", 200.0));
         service.createOrder(new Order(null, "Order_" + timestamp + "_3", 300.0));
 
-        double totalPending = service.getTotalByStatus(OrderStatus.PENDING);
+        double totalPending = service.getTotalByStatus(OrderStatus.CREATED);
         // At least 600.0 from our created orders (may be more from other tests)
         assertTrue(totalPending >= 600.0);
 
         // Confirm one order and check totals again
-        var pendingOrders = service.getOrdersByStatus(OrderStatus.PENDING);
+        var pendingOrders = service.getOrdersByStatus(OrderStatus.CREATED);
         var orderToConfirm = pendingOrders.stream()
             .filter(o -> o.getCustomer().contains("_" + timestamp + "_1"))
             .findFirst();
 
         if (orderToConfirm.isPresent()) {
-            service.confirmOrder(orderToConfirm.get().getId());
+            service.payOrder(orderToConfirm.get().getId());
 
-            double newTotalPending = service.getTotalByStatus(OrderStatus.PENDING);
-            double totalConfirmed = service.getTotalByStatus(OrderStatus.CONFIRMED);
+            double newTotalPending = service.getTotalByStatus(OrderStatus.CREATED);
+            double totalConfirmed = service.getTotalByStatus(OrderStatus.PAID);
 
             // Verify the totals changed correctly
             assertTrue(newTotalPending < totalPending);
@@ -394,16 +405,16 @@ public class OrderServiceTest {
         service.createOrder(new Order(null, "Order2", 200.0));
         service.createOrder(new Order(null, "Order3", 300.0));
 
-        long pendingCount = service.countByStatus(OrderStatus.PENDING);
+        long pendingCount = service.countByStatus(OrderStatus.CREATED);
         assertEquals(3, pendingCount);
 
         // Transition orders and recount
-        var pendingOrders = service.getOrdersByStatus(OrderStatus.PENDING);
-        service.confirmOrder(pendingOrders.get(0).getId());
-        service.confirmOrder(pendingOrders.get(1).getId());
+        var pendingOrders = service.getOrdersByStatus(OrderStatus.CREATED);
+        service.payOrder(pendingOrders.get(0).getId());
+        service.payOrder(pendingOrders.get(1).getId());
 
-        long newPendingCount = service.countByStatus(OrderStatus.PENDING);
-        long confirmedCount = service.countByStatus(OrderStatus.CONFIRMED);
+        long newPendingCount = service.countByStatus(OrderStatus.CREATED);
+        long confirmedCount = service.countByStatus(OrderStatus.PAID);
 
         assertEquals(1, newPendingCount);
         assertEquals(2, confirmedCount);

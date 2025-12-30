@@ -119,13 +119,15 @@ public class ConcurrencyTest {
             futures.add(executor.submit(() -> {
                 try {
                     if (threadId == 0) {
-                        service.confirmOrder(created.getId());
+                        service.payOrder(created.getId());
                     } else if (threadId == 1) {
-                        service.confirmOrder(created.getId());
+                        service.payOrder(created.getId());
                     } else {
                         Order current = service.getOrder(created.getId());
-                        if (current.getStatus() == OrderStatus.CONFIRMED) {
-                            service.processOrder(created.getId());
+                        if (current.getStatus() == OrderStatus.PAID) {
+                            service.transitionOrder(created.getId(), OrderStatus.PAID);
+                        } else if (current.getStatus() == OrderStatus.PAID) {
+                            service.shipOrder(created.getId());
                         }
                     }
                 } catch (InvalidTransitionException e) {
@@ -164,8 +166,9 @@ public class ConcurrencyTest {
         for (Order order : orders) {
             futures.add(executor.submit(() -> {
                 try {
-                    service.confirmOrder(order.getId());
-                    service.processOrder(order.getId());
+                    service.payOrder(order.getId());
+                    service.transitionOrder(order.getId(), OrderStatus.PAID);
+                    service.shipOrder(order.getId());
                     service.shipOrder(order.getId());
                     service.deliverOrder(order.getId());
                 } catch (InvalidTransitionException e) {
@@ -231,8 +234,9 @@ public class ConcurrencyTest {
         Order order = new Order(null, "TerminalTestCustomer", 300.0);
         Order created = service.createOrder(order);
 
-        service.confirmOrder(created.getId());
-        service.processOrder(created.getId());
+        service.payOrder(created.getId());
+        service.transitionOrder(created.getId(), OrderStatus.PAID);
+        service.shipOrder(created.getId());
         service.shipOrder(created.getId());
         service.deliverOrder(created.getId());
 

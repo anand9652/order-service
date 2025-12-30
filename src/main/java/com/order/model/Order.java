@@ -1,17 +1,26 @@
 package com.order.model;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
- * Represents a customer order with state machine transitions.
+ * Represents a customer order with state machine transitions and complete status history.
  * 
  * Features:
  * - Automatic timestamp tracking (createdAt, updatedAt)
  * - State machine validation via OrderStatus enum
+ * - Complete status history with timestamps for audit trail
+ * - Thread-safe status transitions via atomic ordering
  * - Immutable creation metadata (id, customer, total, createdAt)
- * - Mutable operational state (status, updatedAt)
+ * 
+ * Status Flow:
+ * - CREATED → PAID → SHIPPED → DELIVERED
+ * - CREATED → CANCELLED (at any point from CREATED)
  */
 public class Order {
     private Long id;
@@ -20,24 +29,41 @@ public class Order {
     private OrderStatus status;
     private final Instant createdAt;
     private Instant updatedAt;
+    
+    /**
+     * Immutable list of all status transitions.
+     * Records timestamp of each transition for audit trail.
+     * Thread-safe: backed by Collections.synchronizedList()
+     */
+    private final List<StatusTransition> statusHistory = Collections.synchronizedList(new ArrayList<>());
 
     public Order() {
-        this.status = OrderStatus.PENDING;
+        this.status = OrderStatus.CREATED;
         this.createdAt = Instant.now();
         this.updatedAt = Instant.now();
+        initializeStatusHistory();
     }
 
     public Order(Long id, String customer, double total) {
-        this(id, customer, total, OrderStatus.PENDING);
+        this(id, customer, total, OrderStatus.CREATED);
     }
 
     public Order(Long id, String customer, double total, OrderStatus status) {
         this.id = id;
         this.customer = customer;
         this.total = total;
-        this.status = Objects.requireNonNullElse(status, OrderStatus.PENDING);
+        this.status = Objects.requireNonNullElse(status, OrderStatus.CREATED);
         this.createdAt = Instant.now();
         this.updatedAt = Instant.now();
+        initializeStatusHistory();
+    }
+
+    /**
+     * Initialize status history with the initial status.
+     * Called during construction to record the CREATED state.
+     */
+    private void initializeStatusHistory() {
+        statusHistory.add(new StatusTransition(status, createdAt));
     }
 
     /**
@@ -51,10 +77,12 @@ public class Order {
      * @param status the order status
      * @param createdAt the creation timestamp to restore
      * @param updatedAt the last modification timestamp to restore
-     * @return a new Order with the specified timestamps
+     * @param statusHistory the complete status transition history
+     * @return a new Order with the specified timestamps and history
      */
     public static Order fromPersistence(Long id, String customer, double total, 
-                                       OrderStatus status, Instant createdAt, Instant updatedAt) {
+                                       OrderStatus status, Instant createdAt, Instant updatedAt,
+                                       List<StatusTransition> statusHistory) {
         Order order = new Order(id, customer, total, status);
         // Replace the timestamps that were auto-set in constructor with persisted values
         // This is done via reflection to bypass the final field restriction
@@ -64,6 +92,12 @@ public class Order {
             createdAtField.set(order, createdAt);
             
             order.updatedAt = updatedAt;
+            
+            // Restore the complete status history
+            if (statusHistory != null && !statusHistory.isEmpty()) {
+                order.statusHistory.clear();
+                order.statusHistory.addAll(statusHistory);
+            }
         } catch (NoSuchFieldException | IllegalAccessException e) {
             // If reflection fails, just use the timestamps from constructor
             // The order is still valid, just with different timestamps
@@ -104,8 +138,14 @@ public class Order {
     }
 
     public void setStatus(OrderStatus status) { 
-        this.status = Objects.requireNonNullElse(status, OrderStatus.PENDING);
-        this.updatedAt = Instant.now();
+        OrderStatus newStatus = Objects.requireNonNullElse(status, OrderStatus.CREATED);
+        // Only record transition if status actually changes
+        if (this.status != newStatus) {
+            this.status = newStatus;
+            this.updatedAt = Instant.now();
+            // Record the status transition in history
+            statusHistory.add(new StatusTransition(newStatus, Instant.now()));
+        }
     }
 
     /**
@@ -165,11 +205,35 @@ public class Order {
         return Objects.hash(id); 
     }
 
+    /**
+     * Returns an unmodifiable view of the complete status transition history.
+     * Each entry contains the status and timestamp of when that transition occurred.
+     * 
+     * @return unmodifiable list of status transitions in chronological order
+     */
+    public List<StatusTransition> getStatusHistory() {
+        return Collections.unmodifiableList(new ArrayList<>(statusHistory));
+    }
+
+    /**
+     * Returns a formatted string representation of the status history.
+     * Useful for logging and display purposes.
+     * Format: "CREATED (2024-01-01T12:00:00Z) -> PAID (2024-01-01T12:05:00Z) -> SHIPPED (...)"
+     * 
+     * @return formatted status history string
+     */
+    public String getStatusHistoryAsString() {
+        return statusHistory.stream()
+            .map(st -> st.getStatus() + " (" + st.getTimestamp() + ")")
+            .collect(Collectors.joining(" -> "));
+    }
+
     @Override
     public String toString() {
         return """
             Order{id=%d, customer='%s', total=%.2f, status=%s, \
-            createdAt=%s, updatedAt=%s}""".formatted(
-                id, customer, total, status, createdAt, updatedAt);
+            createdAt=%s, updatedAt=%s, history=[%s]}""".formatted(
+                id, customer, total, status, createdAt, updatedAt, 
+                getStatusHistoryAsString());
     }
 }

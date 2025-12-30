@@ -115,17 +115,10 @@ public class OrderService {
     }
 
     /**
-     * Confirms an order (transitions from PENDING to CONFIRMED).
+     * Pays an order (transitions from CREATED to PAID).
      */
-    public Order confirmOrder(Long orderId) {
-        return transitionOrder(orderId, OrderStatus.CONFIRMED);
-    }
-
-    /**
-     * Processes an order (transitions to PROCESSING).
-     */
-    public Order processOrder(Long orderId) {
-        return transitionOrder(orderId, OrderStatus.PROCESSING);
+    public Order payOrder(Long orderId) {
+        return transitionOrder(orderId, OrderStatus.PAID);
     }
 
     /**
@@ -143,17 +136,10 @@ public class OrderService {
     }
 
     /**
-     * Cancels an order (transitions to CANCELLED).
+     * Cancels an order (transitions to CANCELLED from any non-terminal state).
      */
     public Order cancelOrder(Long orderId) {
         return transitionOrder(orderId, OrderStatus.CANCELLED);
-    }
-
-    /**
-     * Marks an order as failed (transitions to FAILED).
-     */
-    public Order failOrder(Long orderId) {
-        return transitionOrder(orderId, OrderStatus.FAILED);
     }
 
     // Stream-based utility methods for reporting and analytics
