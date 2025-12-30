@@ -78,7 +78,6 @@ public class OrderSchedulerTest {
         // Create order and transition to PAID state
         Order order = service.createOrder(new Order(null, "Test Customer", 100.0));
         service.payOrder(order.getId());
-        service.transitionOrder(order.getId(), OrderStatus.PAID);
 
         Order paidOrder = service.getOrder(order.getId());
         assertEquals(OrderStatus.PAID, paidOrder.getStatus(), "Order should be PAID initially");
@@ -87,7 +86,6 @@ public class OrderSchedulerTest {
         // Create an older order by modifying updatedAt
         Order oldOrder = service.createOrder(new Order(null, "Old Customer", 200.0));
         service.payOrder(oldOrder.getId());
-        service.transitionOrder(oldOrder.getId(), OrderStatus.PAID);
 
         // Manually age the order (simulate it being created 2+ minutes ago)
         manipulateOrderTimestamp(oldOrder.getId(), Instant.now().minus(2, ChronoUnit.MINUTES));
@@ -116,7 +114,6 @@ public class OrderSchedulerTest {
         // Create and transition order to PAID
         Order order = service.createOrder(new Order(null, "Test", 100.0));
         service.payOrder(order.getId());
-        service.transitionOrder(order.getId(), OrderStatus.PAID);
 
         // Age the order
         manipulateOrderTimestamp(order.getId(), Instant.now().minus(2, ChronoUnit.MINUTES));
@@ -144,8 +141,7 @@ public class OrderSchedulerTest {
 
         Order processingOrder = service.createOrder(new Order(null, "Processing", 100.0));
         service.payOrder(processingOrder.getId());
-        service.transitionOrder(processingOrder.getId(), OrderStatus.PAID);
-        service.transitionOrder(processingOrder.getId(), OrderStatus.SHIPPED);
+        service.shipOrder(processingOrder.getId());
 
         // Age them all
         for (Long id : new Long[]{pendingOrder.getId(), confirmedOrder.getId(), processingOrder.getId()}) {
@@ -155,9 +151,9 @@ public class OrderSchedulerTest {
         scheduler.start();
         Thread.sleep(2000);
 
-        // Verify: Only PROCESSING status is affected (it's not PAID), so others stay same
+        // Verify: Only PAID orders are transitioned to SHIPPED
         assertEquals(OrderStatus.CREATED, service.getOrder(pendingOrder.getId()).getStatus());
-        assertEquals(OrderStatus.PAID, service.getOrder(confirmedOrder.getId()).getStatus());
+        assertEquals(OrderStatus.SHIPPED, service.getOrder(confirmedOrder.getId()).getStatus());
         assertEquals(OrderStatus.SHIPPED, service.getOrder(processingOrder.getId()).getStatus());
 
         scheduler.stop();
@@ -168,7 +164,6 @@ public class OrderSchedulerTest {
         // Create PAID order
         Order order = service.createOrder(new Order(null, "Recent", 100.0));
         service.payOrder(order.getId());
-        service.transitionOrder(order.getId(), OrderStatus.PAID);
 
         // Verify it's recent (not aged)
         Order recentOrder = service.getOrder(order.getId());
@@ -222,7 +217,6 @@ public class OrderSchedulerTest {
 
         Order order = service.createOrder(new Order(null, "Test", 100.0));
         service.payOrder(order.getId());
-        service.transitionOrder(order.getId(), OrderStatus.PAID);
 
         fastScheduler.start();
         Thread.sleep(2000);
@@ -238,7 +232,7 @@ public class OrderSchedulerTest {
     void testSchedulerGracefulShutdown() throws InterruptedException {
         // Create aged orders
         Order order1 = createAndAgePaidOrder("Customer 1", 100.0);
-        Order order2 = createAndAgePaidOrder("Customer 2", 200.0);
+        createAndAgePaidOrder("Customer 2", 200.0);
 
         scheduler.start();
         Thread.sleep(1000);
@@ -290,7 +284,6 @@ public class OrderSchedulerTest {
     private Order createAndAgePaidOrder(String customer, double total) {
         Order order = service.createOrder(new Order(null, customer, total));
         service.payOrder(order.getId());
-        service.transitionOrder(order.getId(), OrderStatus.PAID);
         manipulateOrderTimestamp(order.getId(), Instant.now().minus(2, ChronoUnit.MINUTES));
         return order;
     }
@@ -301,7 +294,6 @@ public class OrderSchedulerTest {
     private Order createAndAgePaidOrder(String customer, double total, OrderService svc, InMemoryOrderRepository repo) {
         Order order = svc.createOrder(new Order(null, customer, total));
         svc.payOrder(order.getId());
-        svc.transitionOrder(order.getId(), OrderStatus.PAID);
         
         // Manipulate timestamp directly in repo
         Order toAge = repo.findById(order.getId()).orElse(order);

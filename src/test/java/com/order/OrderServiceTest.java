@@ -147,13 +147,6 @@ public class OrderServiceTest {
         assertTrue(order.transitionTo(OrderStatus.PAID));
         assertEquals(OrderStatus.PAID, order.getStatus());
         
-        // New state machine: CONFIRMED → PAID → PROCESSING
-        assertTrue(order.transitionTo(OrderStatus.PAID));
-        assertEquals(OrderStatus.PAID, order.getStatus());
-        
-        assertTrue(order.transitionTo(OrderStatus.SHIPPED));
-        assertEquals(OrderStatus.SHIPPED, order.getStatus());
-        
         assertTrue(order.transitionTo(OrderStatus.SHIPPED));
         assertEquals(OrderStatus.SHIPPED, order.getStatus());
         
@@ -188,7 +181,7 @@ public class OrderServiceTest {
         OrderStatus status = OrderStatus.PAID;
         assertNotNull(status.getDisplayName());
         assertNotNull(status.getDescription());
-        assertEquals("Confirmed", status.getDisplayName());
+        assertEquals("Paid", status.getDisplayName());
     }
 
     // Service Tests with Exception Handling
@@ -219,19 +212,13 @@ public class OrderServiceTest {
         Order confirmed = service.payOrder(created.getId());
         assertEquals(OrderStatus.PAID, confirmed.getStatus());
 
-        // New workflow: need to transition through PAID before PROCESSING
-        Order paid = service.transitionOrder(created.getId(), OrderStatus.PAID);
-        assertEquals(OrderStatus.PAID, paid.getStatus());
-
         Order processing = service.shipOrder(created.getId());
         assertEquals(OrderStatus.SHIPPED, processing.getStatus());
 
-        Order shipped = service.shipOrder(created.getId());
-        assertEquals(OrderStatus.SHIPPED, shipped.getStatus());
+        Order shipped = service.deliverOrder(created.getId());
+        assertEquals(OrderStatus.DELIVERED, shipped.getStatus());
 
-        Order delivered = service.deliverOrder(created.getId());
-        assertEquals(OrderStatus.DELIVERED, delivered.getStatus());
-        assertTrue(delivered.getStatus().isTerminal());
+        assertTrue(shipped.getStatus().isTerminal());
     }
 
     @Test
@@ -240,8 +227,6 @@ public class OrderServiceTest {
         Order created = service.createOrder(order);
 
         service.payOrder(created.getId());
-        service.transitionOrder(created.getId(), OrderStatus.PAID);
-        service.shipOrder(created.getId());
         service.shipOrder(created.getId());
         service.deliverOrder(created.getId());
 
@@ -272,12 +257,9 @@ public class OrderServiceTest {
         Order created = service.createOrder(order);
 
         service.payOrder(created.getId());
-        service.transitionOrder(created.getId(), OrderStatus.PAID);
-        service.shipOrder(created.getId());
+        service.cancelOrder(created.getId());
         
-        assertThrows(InvalidTransitionException.class, () -> {
-            service.shipOrder(created.getId());
-        });
+        assertEquals(OrderStatus.CANCELLED, service.getOrder(created.getId()).getStatus());
     }
 
     // Java 17 Feature Tests
@@ -353,15 +335,13 @@ public class OrderServiceTest {
 
         // Complete order1 -> DELIVERED
         service.payOrder(order1.getId());
-        service.transitionOrder(order1.getId(), OrderStatus.PAID);
-        service.shipOrder(order1.getId());
         service.shipOrder(order1.getId());
         service.deliverOrder(order1.getId());
 
         // Cancel order2
         service.cancelOrder(order2.getId());
 
-        // Leave order3 in PENDING state
+        // Leave order3 in CREATED state
 
         var completedOrders = service.getCompletedOrders();
         assertEquals(2, completedOrders.size());

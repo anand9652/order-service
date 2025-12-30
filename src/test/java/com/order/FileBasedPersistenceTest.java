@@ -108,7 +108,6 @@ public class FileBasedPersistenceTest {
         Long id = created.getId();
 
         service.payOrder(id);
-        service.transitionOrder(id, OrderStatus.PAID);
         service.shipOrder(id);
 
         // Reload from file

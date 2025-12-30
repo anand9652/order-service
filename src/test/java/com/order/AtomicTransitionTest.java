@@ -33,19 +33,16 @@ public class AtomicTransitionTest {
 
     @Test
     void testOnlyOneTransitionSucceedsWhenMultipleThreadsAttemptSame() throws InterruptedException {
-        // Create an order in PENDING state
+        // Create an order in CREATED state
         Order order = service.createOrder(new Order(null, "Test Customer", 100.0));
         Long orderId = order.getId();
 
-        // Thread A will try: CREATED → PAID
-        // Thread B will try: PENDING → FAILED
-        // Both are valid from PENDING, so both CAN succeed, BUT they serialize through the atomic lock.
-        // After Thread A transitions to CONFIRMED, if Thread B still tries FAILED, that becomes invalid.
-        // This tests that the state is re-read after acquiring the lock (double-check pattern).
-        
-        // Better test: After transitioning to CONFIRMED, FAILED is no longer valid!
-        // So one will succeed and transition to CONFIRMED, the other will fail because
-        // FAILED is not a valid transition from CONFIRMED.
+        // First transition it to PAID so both threads attempt from PAID state
+        service.payOrder(orderId);
+
+        // Thread A will try: PAID → SHIPPED
+        // Thread B will try: PAID → CANCELLED
+        // Only one can succeed depending on who acquires the lock first
 
         AtomicInteger successCount = new AtomicInteger(0);
         AtomicInteger failCount = new AtomicInteger(0);
@@ -55,7 +52,7 @@ public class AtomicTransitionTest {
         Thread threadA = new Thread(() -> {
             try {
                 startSignal.await();  // Wait for all threads to be ready
-                service.payOrder(orderId);  // CREATED → PAID
+                service.shipOrder(orderId);  // PAID → SHIPPED
                 successCount.incrementAndGet();
             } catch (InvalidTransitionException e) {
                 failCount.incrementAndGet();
@@ -69,9 +66,8 @@ public class AtomicTransitionTest {
         Thread threadB = new Thread(() -> {
             try {
                 startSignal.await();  // Wait for all threads to be ready
-                // Try to transition to FAILED - valid from PENDING, but only if we get the lock first!
-                // If threadA succeeds first, status becomes CONFIRMED, and CONFIRMED → FAILED is invalid
-                service.transitionOrder(orderId, OrderStatus.CANCELLED);
+                // Try to transition to CANCELLED
+                service.cancelOrder(orderId);
                 successCount.incrementAndGet();
             } catch (InvalidTransitionException e) {
                 failCount.incrementAndGet();
@@ -92,13 +88,12 @@ public class AtomicTransitionTest {
         assertEquals(1, successCount.get(), "Exactly one thread should successfully transition");
         assertEquals(1, failCount.get(), "Exactly one thread should fail due to invalid state transition");
 
-        // Verify the final state is deterministic - should be either CONFIRMED (if A won the lock first)
-        // or FAILED (if B somehow won, but that can't happen because CONFIRMED comes before FAILED wins)
+        // Verify the final state is deterministic - should be either SHIPPED or CANCELLED
         Order finalOrder = service.getOrder(orderId);
         assertTrue(
-            finalOrder.getStatus() == OrderStatus.PAID || 
+            finalOrder.getStatus() == OrderStatus.SHIPPED || 
             finalOrder.getStatus() == OrderStatus.CANCELLED,
-            "Final status must be either CONFIRMED or FAILED"
+            "Final status must be either SHIPPED or CANCELLED"
         );
     }
 

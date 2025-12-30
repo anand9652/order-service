@@ -167,8 +167,6 @@ public class ConcurrencyTest {
             futures.add(executor.submit(() -> {
                 try {
                     service.payOrder(order.getId());
-                    service.transitionOrder(order.getId(), OrderStatus.PAID);
-                    service.shipOrder(order.getId());
                     service.shipOrder(order.getId());
                     service.deliverOrder(order.getId());
                 } catch (InvalidTransitionException e) {
@@ -235,8 +233,6 @@ public class ConcurrencyTest {
         Order created = service.createOrder(order);
 
         service.payOrder(created.getId());
-        service.transitionOrder(created.getId(), OrderStatus.PAID);
-        service.shipOrder(created.getId());
         service.shipOrder(created.getId());
         service.deliverOrder(created.getId());
 
